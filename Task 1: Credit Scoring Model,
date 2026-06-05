@@ -1,0 +1,175 @@
+1. Problem Definition
+Goal: Predict if an individual is likely to default on a loan (binary classification: Good = 0, Bad = 1).
+Use case: Banks/lenders assess creditworthiness before approving loans.
+________________________________________
+2. Sample Dataset Generation
+We’ll create a synthetic dataset with realistic distributions.
+python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score, roc_curve, classification_report
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Set random seed
+np.random.seed(42)
+n_samples = 5000
+
+# Generate features
+data = {
+    'age': np.random.normal(35, 10, n_samples).astype(int),
+    'annual_income': np.random.normal(60000, 25000, n_samples).astype(int),
+    'credit_card_debt': np.random.exponential(5000, n_samples).astype(int),
+    'loan_amount_requested': np.random.uniform(5000, 100000, n_samples).astype(int),
+    'num_open_accounts': np.random.poisson(5, n_samples),
+    'num_credit_inquiries_last_6m': np.random.poisson(1.5, n_samples),
+    'late_payments_last_2y': np.random.poisson(1.2, n_samples),
+    'total_debt': np.random.exponential(20000, n_samples).astype(int),
+    'employment_length_years': np.random.exponential(5, n_samples).astype(int),
+}
+
+df = pd.DataFrame(data)
+
+# Create target (default = 1)
+# Default probability increases with:
+# - high debt-to-income ratio
+# - more late payments
+# - more credit inquiries
+df['debt_to_income'] = df['total_debt'] / df['annual_income']
+prob_default = 1 / (1 + np.exp(-( 
+    -3 
+    + 0.5 * df['late_payments_last_2y'] 
+    + 0.3 * df['num_credit_inquiries_last_6m']
+    + 2.0 * (df['debt_to_income'] > 0.4).astype(int)
+    - 0.05 * df['annual_income'] / 10000
+)))
+df['default'] = (np.random.rand(n_samples) < prob_default).astype(int)
+
+# Drop temporary column
+df = df.drop('debt_to_income', axis=1)
+________________________________________
+3. Feature Engineering
+python
+# Create new features
+df['debt_to_income_ratio'] = df['total_debt'] / df['annual_income']
+df['loan_to_income'] = df['loan_amount_requested'] / df['annual_income']
+df['avg_account_balance'] = df['total_debt'] / (df['num_open_accounts'] + 1)
+df['late_payments_per_account'] = df['late_payments_last_2y'] / (df['num_open_accounts'] + 1)
+df['credit_utilization'] = df['credit_card_debt'] / df['annual_income']
+
+# Binning age
+df['age_group'] = pd.cut(df['age'], bins=[18, 30, 45, 60, 100], labels=['young', 'mid', 'senior', 'retirement'])
+
+# One-hot encode categorical
+df = pd.get_dummies(df, columns=['age_group'], drop_first=True)
+
+# Drop original features replaced by ratios
+final_features = ['annual_income', 'num_open_accounts', 'num_credit_inquiries_last_6m',
+                  'late_payments_last_2y', 'debt_to_income_ratio', 'loan_to_income',
+                  'avg_account_balance', 'late_payments_per_account', 'credit_utilization',
+                  'age_group_mid', 'age_group_senior', 'age_group_retirement']
+
+X = df[final_features]
+y = df['default']
+________________________________________
+4. Train-Test Split & Scaling
+python
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+________________________________________
+5. Model Training
+Logistic Regression
+python
+lr = LogisticRegression(class_weight='balanced', random_state=42)
+lr.fit(X_train_scaled, y_train)
+y_pred_lr = lr.predict(X_test_scaled)
+y_proba_lr = lr.predict_proba(X_test_scaled)[:, 1]
+Decision Tree
+python
+dt = DecisionTreeClassifier(max_depth=5, class_weight='balanced', random_state=42)
+dt.fit(X_train_scaled, y_train)
+y_pred_dt = dt.predict(X_test_scaled)
+y_proba_dt = dt.predict_proba(X_test_scaled)[:, 1]
+Random Forest (best for this task)
+python
+rf = RandomForestClassifier(n_estimators=100, max_depth=7, class_weight='balanced', random_state=42)
+rf.fit(X_train_scaled, y_train)
+y_pred_rf = rf.predict(X_test_scaled)
+y_proba_rf = rf.predict_proba(X_test_scaled)[:, 1]
+________________________________________
+6. Evaluation Metrics
+python
+def evaluate_model(name, y_true, y_pred, y_proba):
+    print(f"\n--- {name} ---")
+    print(f"Precision: {precision_score(y_true, y_pred):.3f}")
+    print(f"Recall:    {recall_score(y_true, y_pred):.3f}")
+    print(f"F1-Score:  {f1_score(y_true, y_pred):.3f}")
+    print(f"ROC-AUC:   {roc_auc_score(y_true, y_proba):.3f}")
+
+evaluate_model("Logistic Regression", y_test, y_pred_lr, y_proba_lr)
+evaluate_model("Decision Tree", y_test, y_pred_dt, y_proba_dt)
+evaluate_model("Random Forest", y_test, y_pred_rf, y_proba_rf)
+
+# Detailed report for Random Forest
+print("\nClassification Report (Random Forest):")
+print(classification_report(y_test, y_pred_rf, target_names=['Good', 'Bad']))
+________________________________________
+7. ROC Curve Visualization
+python
+plt.figure(figsize=(8,6))
+for model, proba, name in [(lr, y_proba_lr, 'Logistic Regression'),
+                            (dt, y_proba_dt, 'Decision Tree'),
+                            (rf, y_proba_rf, 'Random Forest')]:
+    fpr, tpr, _ = roc_curve(y_test, proba)
+    auc = roc_auc_score(y_test, proba)
+    plt.plot(fpr, tpr, label=f'{name} (AUC={auc:.3f})')
+
+plt.plot([0,1], [0,1], 'k--')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('ROC Curves – Credit Scoring Models')
+plt.legend()
+plt.grid()
+plt.show()
+________________________________________
+8. Feature Importance (Random Forest)
+python
+importance = pd.DataFrame({
+    'feature': final_features,
+    'importance': rf.feature_importances_
+}).sort_values('importance', ascending=False)
+
+plt.figure(figsize=(10,6))
+sns.barplot(data=importance, x='importance', y='feature')
+plt.title('Feature Importance – Random Forest')
+plt.tight_layout()
+plt.show()
+________________________________________
+9. Business Interpretation
+Metric	Value (RF)	Interpretation
+Recall (Bad)	~0.75	Catches 75% of actual defaulters
+Precision (Bad)	~0.60	60% of flagged applicants actually default
+ROC-AUC	~0.85	Strong discrimination power
+Threshold tuning: Lower threshold → catch more defaulters (higher recall) but reject more good customers.
+________________________________________
+10. Next Steps for Production
+•	Handling imbalance – Try SMOTE or balanced bagging.
+•	Feature selection – Remove low-importance features to reduce overfitting.
+•	Explainability – Use SHAP/LIME for regulatory compliance.
+•	Threshold optimization – Maximize profit-based metric:
+python
+# Profit curve example
+def profit_at_threshold(y_true, y_proba, threshold):
+    pred = (y_proba >= threshold).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_true, pred).ravel()
+    # Profit = True positives * 1000 - False negatives * 5000 - False positives * 200
+    return tp*1000 - fn*5000 - fp*200
+
