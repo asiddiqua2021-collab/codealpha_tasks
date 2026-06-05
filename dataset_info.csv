@@ -1,0 +1,2 @@
+dataset_name,generated_date,n_records,n_features,default_rate,missing_value_columns,file_name
+Realistic Credit Scoring Dataset,6/5/2026 20:33,10000,29,14.70%,"['credit_score', 'employment_length_years', 'monthly_income', 'credit_utilization']",credit_scoring_dataset.csv
